@@ -1,0 +1,17 @@
+{
+  "name": "market-simulation",
+  "version": "1.0.0",
+  "description": "Real-time multi-user behavioral finance simulation platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend && npm run build --workspace=functions",
+    "deploy": "firebase deploy",
+    "setup": "npm install && npm run install-dependencies",
+    "install-dependencies": "npm install --workspace=frontend && npm install --workspace=functions"
+  }
+}
