@@ -1,95 +1,92 @@
 import React, { useEffect, useState } from 'react'
 import { useStore, Stock, News } from '@/lib/store'
 import { submitTrade } from '@/lib/api'
+import { marketEngine } from '@/lib/market-engine'
 import PriceTicker from '@/components/PriceTicker'
 import NewsCard from '@/components/NewsCard'
 import TradeForm from '@/components/TradeForm'
 import Portfolio from '@/components/Portfolio'
 import PriceChart from '@/components/PriceChart'
-import { onSnapshot, collection, doc, query, orderBy, limit, getDocs } from 'firebase/firestore'
+import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { AlertCircle, Zap } from 'lucide-react'
 
 export const Dashboard: React.FC = () => {
-  const { user, market, setMarket, isLoading, setLoading } = useStore()
+  const { user, isLoading, setLoading } = useStore()
   const [selectedStock, setSelectedStock] = useState('TECH')
   const [priceHistory, setPriceHistory] = useState<any[]>([])
-  const [lastNews, setLastNews] = useState<News | null>(null)
+  const [currentPrice, setCurrentPrice] = useState(100)
+  const [news, setNews] = useState<News[]>([])
   const [tradingError, setTradingError] = useState<string | null>(null)
+  const [stocks, setStocks] = useState<Record<string, Stock>>({
+    TECH: { symbol: 'TECH', price: 100, change: 0, changePercent: 0, sentiment: 0, optics: 0 },
+    BIO: { symbol: 'BIO', price: 95, change: 0, changePercent: 0, sentiment: 0, optics: 0 },
+    FINA: { symbol: 'FINA', price: 102, change: 0, changePercent: 0, sentiment: 0, optics: 0 }
+  })
 
-  // Subscribe to market state
+  // Initialize market engine
   useEffect(() => {
-    if (!user) return
-
-    const unsubscribe = onSnapshot(doc(db, `artifacts/${user.id}/public/data/market_state/main`), (doc) => {
-      if (doc.exists()) {
-        const data = doc.data()
-        setMarket(data as any)
-      }
-    })
-
-    return () => unsubscribe()
-  }, [user, setMarket])
-
-  // Load price history
-  useEffect(() => {
-    if (!selectedStock) return
-
-    const loadHistory = async () => {
-      try {
-        const q = query(
-          collection(db, 'price_history'),
-          orderBy('timestamp', 'desc'),
-          limit(60)
-        )
-        const snapshot = await getDocs(q)
-        const history = snapshot.docs
-          .map((d) => d.data())
-          .filter((d) => d.symbol === selectedStock)
-          .reverse()
-
-        setPriceHistory(
-          history.map((h) => ({
-            time: new Date(h.timestamp).toLocaleTimeString(),
-            price: h.price
-          }))
-        )
-      } catch (error) {
-        console.error('Failed to load price history:', error)
-      }
+    const init = async () => {
+      await marketEngine.initialize()
+      setCurrentPrice(marketEngine.getCurrentPrice())
     }
+    init()
+  }, [])
 
-    loadHistory()
+  // Client-side market ticking (every 1 second)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const newPrice = marketEngine.updatePrice()
+      setCurrentPrice(newPrice)
+      
+      // Update price history
+      setPriceHistory(prev => [...prev.slice(-59), {
+        time: new Date().toLocaleTimeString(),
+        price: newPrice
+      }])
+
+      // Update stocks display
+      setStocks(prev => ({
+        ...prev,
+        [selectedStock]: {
+          ...prev[selectedStock],
+          price: newPrice,
+          change: newPrice - 100,
+          changePercent: ((newPrice - 100) / 100) * 100
+        }
+      }))
+    }, 1000)
+
+    return () => clearInterval(interval)
   }, [selectedStock])
 
-  // Subscribe to latest news
+  // Subscribe to news updates
   useEffect(() => {
-    if (!user) return
-
     const unsubscribe = onSnapshot(
-      query(collection(db, 'news'), orderBy('timestamp', 'desc'), limit(1)),
+      query(collection(db, 'news'), orderBy('timestamp', 'desc'), limit(10)),
       (snapshot) => {
-        if (!snapshot.empty) {
-          setLastNews(snapshot.docs[0].data() as News)
+        const newsItems = snapshot.docs.map(doc => doc.data() as News)
+        setNews(newsItems)
+        
+        // Apply latest news to market
+        if (newsItems.length > 0) {
+          marketEngine.injectNews(newsItems[0].sentiment)
         }
       }
     )
 
     return () => unsubscribe()
-  }, [user])
+  }, [])
 
   const handleTrade = async (quantity: number, type: 'buy' | 'sell') => {
-    if (!user || !market) return
+    if (!user) return
 
     setLoading(true)
     setTradingError(null)
 
     try {
-      const stock = market.prices[selectedStock]
+      const stock = stocks[selectedStock]
       if (!stock) throw new Error('Stock not found')
-
-      const sentiment = lastNews?.sentiment || 0
-      const newsContext = lastNews ? [lastNews.id] : []
 
       await submitTrade(
         user.id,
@@ -97,8 +94,8 @@ export const Dashboard: React.FC = () => {
         quantity,
         stock.price,
         type,
-        sentiment,
-        newsContext
+        0,
+        []
       )
 
       setTradingError(null)
@@ -109,19 +106,19 @@ export const Dashboard: React.FC = () => {
     }
   }
 
-  if (!user || !market) {
+  if (!user) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
         <div className="text-center">
           <Zap className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-pulse" />
-          <h1 className="text-2xl font-bold text-white mb-2">Initializing Market...</h1>
-          <p className="text-gray-400">Connecting to live market feed</p>
+          <h1 className="text-2xl font-bold text-white mb-2">Initializing...</h1>
+          <p className="text-gray-400">Connecting to market</p>
         </div>
       </div>
     )
   }
 
-  const currentStock = market.prices[selectedStock]
+  const currentStock = stocks[selectedStock]
 
   return (
     <div className="min-h-screen bg-gray-950 p-4">
@@ -132,7 +129,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <h1 className="text-3xl font-bold text-white">Market Simulation</h1>
               <p className="text-gray-400 mt-1">
-                Session: <span className="text-yellow-500 font-semibold">{market.sessionStatus}</span>
+                Behavioral Finance Trading Platform
               </p>
             </div>
             <div className="text-right">
@@ -142,31 +139,32 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Market Status Warning */}
-        {market.sessionStatus !== 'active' && (
-          <div className="bg-orange-900/20 border border-orange-600/50 rounded-lg p-4 flex gap-3">
-            <AlertCircle className="text-orange-500 flex-shrink-0" size={20} />
-            <div>
-              <h3 className="font-semibold text-orange-500">Market {market.sessionStatus}</h3>
-              <p className="text-gray-400 text-sm">Trading is currently {market.sessionStatus}</p>
-            </div>
-          </div>
-        )}
-
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Prices & Charts */}
           <div className="lg:col-span-2 space-y-6">
             {/* Price Tickers */}
             <div>
-              <h2 className="text-lg font-bold text-white mb-4">Market Prices</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {Object.values(market.prices).map((stock: Stock) => (
-                  <PriceTicker
+              <h2 className="text-lg font-bold text-white mb-4">Market Prices (Live)</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {Object.values(stocks).map((stock: Stock) => (
+                  <div
                     key={stock.symbol}
-                    stock={stock}
                     onClick={() => setSelectedStock(stock.symbol)}
-                  />
+                    className={`p-4 rounded-lg cursor-pointer transition ${
+                      selectedStock === stock.symbol
+                        ? 'bg-blue-900/50 border border-blue-500'
+                        : 'bg-gray-900 border border-gray-800 hover:border-gray-700'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="text-white font-bold">{stock.symbol}</h3>
+                      <span className={stock.change >= 0 ? 'text-green-500' : 'text-red-500'}>
+                        {stock.change >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                      </span>
+                    </div>
+                    <p className="text-2xl font-bold text-white">${stock.price.toFixed(2)}</p>
+                  </div>
                 ))}
               </div>
             </div>
@@ -180,9 +178,9 @@ export const Dashboard: React.FC = () => {
             <div>
               <h2 className="text-lg font-bold text-white mb-4">Market News</h2>
               <div className="space-y-3 max-h-96 overflow-y-auto">
-                {market.news && market.news.length > 0 ? (
-                  market.news.slice(0, 5).map((news: News) => (
-                    <NewsCard key={news.id} news={news} />
+                {news.length > 0 ? (
+                  news.slice(0, 5).map((n: News) => (
+                    <NewsCard key={n.id} news={n} />
                   ))
                 ) : (
                   <p className="text-gray-500 text-center py-8">Awaiting market news...</p>
@@ -216,7 +214,7 @@ export const Dashboard: React.FC = () => {
             <Portfolio
               user={user}
               prices={Object.fromEntries(
-                Object.entries(market.prices).map(([k, v]: [string, any]) => [k, v.price])
+                Object.entries(stocks).map(([k, v]: [string, Stock]) => [k, v.price])
               )}
             />
           </div>
