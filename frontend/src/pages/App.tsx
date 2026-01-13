@@ -15,7 +15,7 @@ export const App: React.FC = () => {
         const uid = await authenticateUser()
         const userData = await getUserData(uid)
         if (userData) {
-          setUser(userData)
+          setUser(userData as any)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to initialize')

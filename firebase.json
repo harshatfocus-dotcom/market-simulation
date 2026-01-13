@@ -1,32 +1,22 @@
 {
-  "projects": {
-    "default": "market-simulation-prod"
+  "hosting": {
+    "public": "frontend/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
   },
-  "targets": {
-    "market-simulation-prod": {
-      "hosting": [
-        {
-          "target": "web",
-          "public": "frontend/dist",
-          "ignore": [
-            "firebase.json",
-            "**/.*",
-            "**/node_modules/**"
-          ],
-          "rewrites": [
-            {
-              "source": "**",
-              "destination": "/index.html"
-            }
-          ]
-        }
-      ],
-      "functions": [
-        {
-          "source": "functions",
-          "codebase": "default"
-        }
-      ]
-    }
+  "functions": {
+    "source": "functions"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
   }
 }
